@@ -9,7 +9,8 @@ use super::anthropic_compat::{
     anthropic_request_body, map_provider_error as map_anthropic_error, spawn_anthropic_stream,
 };
 use super::openai_compat::{
-    map_provider_error as map_openai_error, openai_request_body, spawn_openai_stream,
+    map_provider_error as map_openai_error, map_send_error, openai_request_body,
+    spawn_openai_stream,
 };
 use super::{Provider, ProviderError, StreamChunk};
 
@@ -67,7 +68,7 @@ impl CustomProvider {
             }
         }
 
-        let client = reqwest::Client::builder()
+        let client = super::client_builder()
             .default_headers(headers)
             .build()
             .map_err(|err| {
@@ -126,12 +127,13 @@ impl Provider for CustomProvider {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|err| ProviderError::RequestFailed(err.to_string()))?;
+                    .map_err(map_send_error)?;
 
                 let status = response.status();
                 if !status.is_success() {
+                    let headers = response.headers().clone();
                     let body_text = response.text().await.unwrap_or_default();
-                    return Err(map_openai_error(status, body_text));
+                    return Err(map_openai_error(status, &headers, body_text));
                 }
 
                 Ok(spawn_openai_stream(response, "custom"))
@@ -152,12 +154,13 @@ impl Provider for CustomProvider {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|err| ProviderError::RequestFailed(err.to_string()))?;
+                    .map_err(map_send_error)?;
 
                 let status = response.status();
                 if !status.is_success() {
+                    let headers = response.headers().clone();
                     let body_text = response.text().await.unwrap_or_default();
-                    return Err(map_anthropic_error(status, body_text));
+                    return Err(map_anthropic_error(status, &headers, body_text));
                 }
 
                 Ok(spawn_anthropic_stream(response, "custom"))
@@ -257,6 +260,75 @@ mod tests {
         assert!(matches!(
             &chunks[0],
             StreamChunk::ToolUse(call) if call.name == "lookup" && call.input == json!({"path":"src"})
+        ));
+    }
+
+    #[tokio::test]
+    async fn openai_mid_stream_error_object_fails_the_stream() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"index\":0,\"finish_reason\":null}]}\n\n",
+            "data: {\"error\":{\"message\":\"upstream overloaded\",\"type\":\"server_error\"}}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"never shown\"},\"index\":0,\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n"
+        )
+        .to_string();
+        let base_url = spawn_sse_server(body, 200, |_| {});
+
+        let mut config = NcaConfig::default();
+        config.provider.custom.api_key = Some("custom-test-key".into());
+        config.provider.custom.base_url = base_url;
+        config.provider.custom.compatibility = ProviderCompatibility::OpenAi;
+
+        let provider = CustomProvider::from_config(&config).expect("provider");
+        let stream = provider
+            .chat(
+                &[Message::user("hello")],
+                &[],
+                "",
+                std::path::Path::new("."),
+            )
+            .await
+            .expect("chat stream");
+
+        let chunks = collect_chunks(stream).await;
+        assert!(chunks.iter().any(
+            |chunk| matches!(chunk, StreamChunk::Failed(message) if message.contains("upstream overloaded"))
+        ));
+        assert!(
+            !chunks.iter().any(
+                |chunk| matches!(chunk, StreamChunk::TextDelta(text) if text == "never shown")
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn anthropic_error_event_fails_the_stream() {
+        let body = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+        )
+        .to_string();
+        let base_url = spawn_sse_server(body, 200, |_| {});
+
+        let mut config = NcaConfig::default();
+        config.provider.custom.api_key = Some("custom-test-key".into());
+        config.provider.custom.base_url = base_url;
+        config.provider.custom.compatibility = ProviderCompatibility::Anthropic;
+
+        let provider = CustomProvider::from_config(&config).expect("provider");
+        let stream = provider
+            .chat(
+                &[Message::user("hello")],
+                &[],
+                "",
+                std::path::Path::new("."),
+            )
+            .await
+            .expect("chat stream");
+
+        let chunks = collect_chunks(stream).await;
+        assert!(chunks.iter().any(
+            |chunk| matches!(chunk, StreamChunk::Failed(message) if message.contains("Overloaded"))
         ));
     }
 }

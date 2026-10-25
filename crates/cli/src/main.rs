@@ -915,7 +915,12 @@ async fn spawn_run(
     permission_mode: CliPermissionMode,
     json: bool,
 ) -> anyhow::Result<()> {
-    let session_id = format!("session-{}", chrono::Utc::now().timestamp_millis());
+    // Include the pid: parallel `nca spawn` calls within one millisecond must not collide.
+    let session_id = format!(
+        "session-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        std::process::id()
+    );
     let config = NcaConfig::load_for_workspace(workspace_root).unwrap_or_default();
     let sessions_dir = resolve_sessions_dir(&config, workspace_root);
     std::fs::create_dir_all(&sessions_dir)?;
@@ -1273,6 +1278,9 @@ fn print_human_session(session: &SessionSnapshot) {
         session.updated_at.to_rfc3339(),
         session.child_session_ids.len()
     );
+    if let Some(title) = &session.title {
+        println!("  name: {title}");
+    }
     if let Some(summary) = &session.session_summary {
         println!("  summary: {}", summary.replace('\n', " "));
     }

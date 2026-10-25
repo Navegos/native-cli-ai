@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use super::connect_modal::{ConnectRow, build_connect_rows, selectable_row_indices};
 use super::state::OnboardingValidation;
-use super::terminal::{restore_terminal, setup_terminal};
+use super::terminal::{is_actionable_key, restore_terminal, setup_terminal};
 
 /// Shared validation state updated by the background task.
 type ValidationState = Arc<Mutex<Option<OnboardingValidation>>>;
@@ -48,7 +48,8 @@ fn onboarding_connect_rows(search: &str) -> Vec<ConnectRow> {
 /// Runs the onboarding TUI. Returns the updated config with the validated key
 /// and onboarding_completed = true, or an error if the user quits (Ctrl+C).
 pub async fn run_onboarding(config: NcaConfig) -> anyhow::Result<NcaConfig> {
-    let mut terminal = setup_terminal()?;
+    // Onboarding handles keys only, so keep mouse capture off and let the terminal copy API keys.
+    let mut terminal = setup_terminal(false)?;
     let result = run_onboarding_inner(config, &mut terminal).await;
     restore_terminal();
     result
@@ -133,6 +134,7 @@ async fn run_onboarding_inner(
         // Poll events (short timeout so spinner animates smoothly)
         if event::poll(Duration::from_millis(if is_validating { 30 } else { 50 }))?
             && let Event::Key(key) = event::read()?
+            && is_actionable_key(&key)
         {
             // Global quit
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {

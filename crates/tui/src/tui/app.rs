@@ -22,7 +22,7 @@ use crate::tui::layout::{
 use crate::tui::state::{
     CustomProviderSetupStep, DisplayBlock, ModelPickerAction, ModelPickerEntry, TuiSessionState,
 };
-use crate::tui::terminal::{restore_terminal, setup_terminal};
+use crate::tui::terminal::{is_actionable_key, restore_terminal, setup_terminal};
 use crate::tui::theme;
 use crate::tui::transcript::{
     ensure_transcript_cache, live_activity_lines, parse_approval_verdict, transcript_lines,
@@ -216,9 +216,10 @@ pub fn run_blocking(
     approval_answer_tx: Option<Sender<ApprovalAnswer>>,
     show_run_banner: bool,
     cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    mouse_capture: bool,
 ) -> anyhow::Result<()> {
     let _ = version_rx.borrow_and_update();
-    let mut terminal = setup_terminal()?;
+    let mut terminal = setup_terminal(mouse_capture)?;
 
     // Load slash entries once: hardcoded commands + discovered skills
     let skill_dirs = vec![PathBuf::from(".nca/skills")];
@@ -1875,7 +1876,7 @@ pub fn run_blocking(
                         let _ = cmd_tx.try_send(TuiCmd::OpenBranchPicker);
                     }
                 }
-                Event::Key(key) => {
+                Event::Key(key) if is_actionable_key(&key) => {
                     if g.command_palette_open() {
                         match (key.code, key.modifiers) {
                             (KeyCode::Esc, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
@@ -2616,6 +2617,33 @@ pub fn run_blocking(
                     }
 
                     match (key.code, key.modifiers) {
+                        // Keyboard paging keeps the transcript reachable with `ui.mouse_capture = false`.
+                        (KeyCode::PageUp | KeyCode::PageDown, KeyModifiers::NONE) => {
+                            let sz = terminal.size()?;
+                            let area = Rect::new(0, 0, sz.width, sz.height);
+                            let (main_area, _) = layout_with_sidebar(area);
+                            let sh = composer_chrome_height(
+                                &slash_entries,
+                                &workspace_files,
+                                &g.input_buffer,
+                                g.cursor_char_idx,
+                            );
+                            let (tr, _, _, _) = layout_chunks(main_area, sh);
+                            let inner_w = tr.width.saturating_sub(2);
+                            let total = ensure_transcript_cache(&mut g, inner_w).lines.len();
+                            let view = tr.height.saturating_sub(2) as usize;
+                            let max_scroll = total.saturating_sub(view);
+                            if key.code == KeyCode::PageUp {
+                                g.transcript_follow_tail = false;
+                                g.scroll_lines = g.scroll_lines.saturating_sub(view.max(1));
+                            } else {
+                                g.scroll_lines = (g.scroll_lines + view.max(1)).min(max_scroll);
+                                if g.scroll_lines >= max_scroll {
+                                    g.transcript_follow_tail = true;
+                                }
+                            }
+                            g.mark_dirty();
+                        }
                         (KeyCode::Esc, _) if escape_cancels_active_turn(&g) => {
                             if let Some(ref flag) = cancel_flag {
                                 flag.store(true, std::sync::atomic::Ordering::SeqCst);

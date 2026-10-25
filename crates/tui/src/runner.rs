@@ -89,6 +89,15 @@ impl SessionRuntime {
         self.supervisor.save().await
     }
 
+    /// Name the session for `/rename`. Blank names clear the title.
+    pub fn set_title(&mut self, title: &str) {
+        self.supervisor.set_title(title);
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        self.supervisor.title()
+    }
+
     pub fn take_ipc_handle(&mut self) -> Option<IpcHandle> {
         self.handle.as_mut()?.take_ipc_handle()
     }

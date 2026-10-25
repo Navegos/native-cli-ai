@@ -120,6 +120,15 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "ctrl+x c",
         Always
     ),
+    command!(
+        "rename",
+        "/rename",
+        [],
+        "Name this session so it is easy to find",
+        Session,
+        "",
+        Always
+    ),
     command!("mcp", "/mcp", [], "Show MCP servers", System, "", Always),
     command!(
         "agents",

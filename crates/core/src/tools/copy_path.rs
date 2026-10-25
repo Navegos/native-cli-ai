@@ -1,14 +1,26 @@
+use std::sync::Arc;
+
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
 use super::ToolExecutor;
+use super::ledger::FileLedger;
 
 pub struct CopyPathTool {
     workspace_root: std::path::PathBuf,
+    ledger: Arc<FileLedger>,
 }
 
 impl CopyPathTool {
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
-        Self { workspace_root }
+        let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
+        Self::with_ledger(workspace_root, ledger)
+    }
+
+    pub fn with_ledger(workspace_root: std::path::PathBuf, ledger: Arc<FileLedger>) -> Self {
+        Self {
+            workspace_root,
+            ledger,
+        }
     }
 }
 
@@ -70,16 +82,20 @@ impl ToolExecutor for CopyPathTool {
         }
 
         match tokio::fs::copy(&canonical_from, &to_path).await {
-            Ok(_) => ToolResult {
-                call_id: call.id.clone(),
-                success: true,
-                output: format!(
-                    "Copied {} -> {}",
-                    canonical_from.display(),
-                    to_path.display()
-                ),
-                error: None,
-            },
+            Ok(_) => {
+                // Exempt from read-before-edit, but keep an earlier read of the target valid.
+                self.ledger.refresh_from_disk(&to_path);
+                ToolResult {
+                    call_id: call.id.clone(),
+                    success: true,
+                    output: format!(
+                        "Copied {} -> {}",
+                        canonical_from.display(),
+                        to_path.display()
+                    ),
+                    error: None,
+                }
+            }
             Err(err) => ToolResult {
                 call_id: call.id.clone(),
                 success: false,

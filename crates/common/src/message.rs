@@ -290,6 +290,10 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<MessageToolCall>>,
+    /// Model reasoning from the turn that produced this assistant message. Replayed to
+    /// providers that require it (DeepSeek thinking mode) and never shown in the transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl Message {
@@ -299,6 +303,7 @@ impl Message {
             content: MessageContent::Text(content.into()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -308,6 +313,7 @@ impl Message {
             content: MessageContent::Parts(parts),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -317,6 +323,7 @@ impl Message {
             content: MessageContent::Text(content.into()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -329,6 +336,7 @@ impl Message {
             content: MessageContent::Text(content.into()),
             tool_call_id: None,
             tool_calls: Some(tool_calls),
+            reasoning_content: None,
         }
     }
 
@@ -338,6 +346,7 @@ impl Message {
             content: MessageContent::Text(content.into()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }
     }
 
@@ -347,6 +356,7 @@ impl Message {
             content: MessageContent::Text(content.into()),
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: None,
+            reasoning_content: None,
         }
     }
 

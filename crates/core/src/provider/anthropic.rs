@@ -6,6 +6,7 @@ use nca_common::tool::ToolDefinition;
 use reqwest::header::{HeaderMap, HeaderValue};
 
 use super::anthropic_compat::{anthropic_request_body, map_provider_error, spawn_anthropic_stream};
+use super::openai_compat::map_send_error;
 use super::{Provider, ProviderError, StreamChunk};
 
 pub struct AnthropicProvider {
@@ -35,7 +36,7 @@ impl AnthropicProvider {
         );
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
-        let client = reqwest::Client::builder()
+        let client = super::client_builder()
             .default_headers(headers)
             .build()
             .map_err(|err| {
@@ -84,12 +85,13 @@ impl Provider for AnthropicProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|err| ProviderError::RequestFailed(err.to_string()))?;
+            .map_err(map_send_error)?;
 
         let status = response.status();
         if !status.is_success() {
+            let headers = response.headers().clone();
             let body_text = response.text().await.unwrap_or_default();
-            return Err(map_provider_error(status, body_text));
+            return Err(map_provider_error(status, &headers, body_text));
         }
 
         Ok(spawn_anthropic_stream(response, "anthropic"))

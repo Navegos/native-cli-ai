@@ -1,14 +1,26 @@
+use std::sync::Arc;
+
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
 use super::ToolExecutor;
+use super::ledger::FileLedger;
 
 pub struct EditFileTool {
     workspace_root: std::path::PathBuf,
+    ledger: Arc<FileLedger>,
 }
 
 impl EditFileTool {
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
-        Self { workspace_root }
+        let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
+        Self::with_ledger(workspace_root, ledger)
+    }
+
+    pub fn with_ledger(workspace_root: std::path::PathBuf, ledger: Arc<FileLedger>) -> Self {
+        Self {
+            workspace_root,
+            ledger,
+        }
     }
 }
 
@@ -66,6 +78,15 @@ impl ToolExecutor for EditFileTool {
             }
         };
 
+        if let Err(message) = self.ledger.check_edit(&canonical, &content) {
+            return ToolResult {
+                call_id: call.id.clone(),
+                success: false,
+                output: String::new(),
+                error: Some(message),
+            };
+        }
+
         if old_text.is_empty() {
             return ToolResult {
                 call_id: call.id.clone(),
@@ -109,18 +130,21 @@ impl ToolExecutor for EditFileTool {
             };
         };
 
-        match tokio::fs::write(&canonical, updated).await {
-            Ok(()) => ToolResult {
-                call_id: call.id.clone(),
-                success: true,
-                output: format!(
-                    "Edited {} (replaced {} occurrence{})",
-                    canonical.display(),
-                    occurrence_count,
-                    if occurrence_count == 1 { "" } else { "s" }
-                ),
-                error: None,
-            },
+        match tokio::fs::write(&canonical, &updated).await {
+            Ok(()) => {
+                self.ledger.record(&canonical, &updated);
+                ToolResult {
+                    call_id: call.id.clone(),
+                    success: true,
+                    output: format!(
+                        "Edited {} (replaced {} occurrence{})",
+                        canonical.display(),
+                        occurrence_count,
+                        if occurrence_count == 1 { "" } else { "s" }
+                    ),
+                    error: None,
+                }
+            }
             Err(err) => ToolResult {
                 call_id: call.id.clone(),
                 success: false,
@@ -143,12 +167,19 @@ mod tests {
         }
     }
 
+    /// Writes `main.rs` and returns a tool whose ledger saw that content being read.
+    fn tool_after_read(dir: &tempfile::TempDir, content: &str) -> EditFileTool {
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, content).unwrap();
+        let ledger = Arc::new(FileLedger::new(dir.path().to_path_buf()));
+        ledger.record(&path, content);
+        EditFileTool::with_ledger(dir.path().to_path_buf(), ledger)
+    }
+
     #[tokio::test]
     async fn edit_file_rejects_ambiguous_single_replacements() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("main.rs"), "alpha\nalpha\n").unwrap();
-
-        let tool = EditFileTool::new(dir.path().to_path_buf());
+        let tool = tool_after_read(&dir, "alpha\nalpha\n");
         let result = tool
             .execute(&make_call(serde_json::json!({
                 "path": "main.rs",
@@ -164,9 +195,7 @@ mod tests {
     #[tokio::test]
     async fn edit_file_replace_all_reports_replacement_count() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("main.rs"), "alpha\nalpha\n").unwrap();
-
-        let tool = EditFileTool::new(dir.path().to_path_buf());
+        let tool = tool_after_read(&dir, "alpha\nalpha\n");
         let result = tool
             .execute(&make_call(serde_json::json!({
                 "path": "main.rs",
@@ -180,5 +209,69 @@ mod tests {
         assert!(result.output.contains("replaced 2 occurrences"));
         let updated = std::fs::read_to_string(dir.path().join("main.rs")).unwrap();
         assert_eq!(updated, "beta\nbeta\n");
+    }
+
+    #[tokio::test]
+    async fn edit_file_requires_the_file_to_have_been_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.rs"), "alpha\n").unwrap();
+
+        let tool = EditFileTool::new(dir.path().to_path_buf());
+        let result = tool
+            .execute(&make_call(serde_json::json!({
+                "path": "main.rs",
+                "old_text": "alpha",
+                "new_text": "beta"
+            })))
+            .await;
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(error.contains("`main.rs` has not been read"), "{error}");
+        assert!(error.contains("read_file"), "{error}");
+        let untouched = std::fs::read_to_string(dir.path().join("main.rs")).unwrap();
+        assert_eq!(untouched, "alpha\n");
+    }
+
+    #[tokio::test]
+    async fn edit_file_rejects_a_file_changed_since_the_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = tool_after_read(&dir, "alpha\n");
+        std::fs::write(dir.path().join("main.rs"), "alpha and more\n").unwrap();
+
+        let result = tool
+            .execute(&make_call(serde_json::json!({
+                "path": "main.rs",
+                "old_text": "alpha",
+                "new_text": "beta"
+            })))
+            .await;
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(
+            error.contains("`main.rs` changed since it was last read"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_allows_consecutive_edits_after_one_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = tool_after_read(&dir, "alpha beta\n");
+
+        for (old_text, new_text) in [("alpha", "ALPHA"), ("beta", "BETA")] {
+            let result = tool
+                .execute(&make_call(serde_json::json!({
+                    "path": "main.rs",
+                    "old_text": old_text,
+                    "new_text": new_text
+                })))
+                .await;
+            assert!(result.success, "{result:?}");
+        }
+
+        let updated = std::fs::read_to_string(dir.path().join("main.rs")).unwrap();
+        assert_eq!(updated, "ALPHA BETA\n");
     }
 }

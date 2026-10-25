@@ -1,14 +1,26 @@
+use std::sync::Arc;
+
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
 use super::ToolExecutor;
+use super::ledger::FileLedger;
 
 pub struct RenamePathTool {
     workspace_root: std::path::PathBuf,
+    ledger: Arc<FileLedger>,
 }
 
 impl RenamePathTool {
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
-        Self { workspace_root }
+        let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
+        Self::with_ledger(workspace_root, ledger)
+    }
+
+    pub fn with_ledger(workspace_root: std::path::PathBuf, ledger: Arc<FileLedger>) -> Self {
+        Self {
+            workspace_root,
+            ledger,
+        }
     }
 }
 
@@ -30,7 +42,7 @@ impl ToolExecutor for RenamePathTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolResult {
-        rename_impl(&self.workspace_root, call, "renamed").await
+        rename_impl(&self.workspace_root, call, "renamed", &self.ledger).await
     }
 }
 
@@ -38,6 +50,7 @@ pub(super) async fn rename_impl(
     workspace_root: &std::path::PathBuf,
     call: &ToolCall,
     verb: &str,
+    ledger: &FileLedger,
 ) -> ToolResult {
     let from = call.input["from"].as_str().unwrap_or("");
     let to = call.input["to"].as_str().unwrap_or("");
@@ -80,16 +93,22 @@ pub(super) async fn rename_impl(
     }
 
     match tokio::fs::rename(&canonical_from, &to_path).await {
-        Ok(()) => ToolResult {
-            call_id: call.id.clone(),
-            success: true,
-            output: format!(
-                "{verb} {} -> {}",
-                canonical_from.display(),
-                to_path.display()
-            ),
-            error: None,
-        },
+        Ok(()) => {
+            // Exempt from read-before-edit: the old path is gone, and an
+            // earlier read of an overwritten target stays valid.
+            ledger.forget(&canonical_from);
+            ledger.refresh_from_disk(&to_path);
+            ToolResult {
+                call_id: call.id.clone(),
+                success: true,
+                output: format!(
+                    "{verb} {} -> {}",
+                    canonical_from.display(),
+                    to_path.display()
+                ),
+                error: None,
+            }
+        }
         Err(err) => ToolResult {
             call_id: call.id.clone(),
             success: false,

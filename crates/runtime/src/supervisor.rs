@@ -66,6 +66,7 @@ pub struct Supervisor {
     inherited_summary: Option<String>,
     spawn_reason: Option<String>,
     session_summary: Option<String>,
+    title: Option<String>,
     orchestration: Option<OrchestrationContext>,
     /// Authoritative session todo list (shared with `update_todos` tool).
     todos: Arc<Mutex<Vec<AgentTodo>>>,
@@ -264,6 +265,7 @@ impl Supervisor {
             inherited_summary: None,
             spawn_reason: None,
             session_summary: None,
+            title: None,
             orchestration: cfg.orchestration_context,
             todos,
             config,
@@ -325,6 +327,7 @@ impl Supervisor {
         sup.inherited_summary = loaded.meta.inherited_summary;
         sup.spawn_reason = loaded.meta.spawn_reason;
         sup.session_summary = loaded.meta.session_summary;
+        sup.title = loaded.meta.title;
         sup.orchestration = loaded.meta.orchestration;
         if let Ok(mut guard) = sup.todos.lock() {
             *guard = loaded.todos;
@@ -657,6 +660,7 @@ impl Supervisor {
                 inherited_summary: self.inherited_summary.clone(),
                 spawn_reason: self.spawn_reason.clone(),
                 session_summary: self.session_summary.clone(),
+                title: self.title.clone(),
                 orchestration: self.orchestration.clone(),
             },
             messages: self.agent.messages.clone(),
@@ -678,6 +682,16 @@ impl Supervisor {
 
     pub fn compact_summary(&self) -> String {
         build_parent_summary(&self.agent.messages)
+    }
+
+    /// Name for the session, set by `/rename`. Blank names clear the title.
+    pub fn set_title(&mut self, title: &str) {
+        let trimmed = title.trim();
+        self.title = (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
     }
 
     pub fn set_session_summary(&mut self, summary: Option<String>) {
@@ -720,6 +734,7 @@ impl Supervisor {
         self.inherited_summary = None;
         self.spawn_reason = None;
         self.session_summary = None;
+        self.title = None;
         self.agent.cost_tracker = Default::default();
         self.status = SessionStatus::Running;
         self.created_at = Utc::now();
@@ -1165,7 +1180,13 @@ impl ApprovalHandler for AutoDenyHandler {
 fn generate_session_id() -> String {
     static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("session-{}-{counter}", Utc::now().timestamp_micros())
+    // The pid keeps two processes started in the same microsecond from sharing an id, and
+    // with it a socket path and session files.
+    format!(
+        "session-{}-{}-{counter}",
+        Utc::now().timestamp_micros(),
+        std::process::id()
+    )
 }
 
 fn permission_mode_label(mode: PermissionMode) -> String {
@@ -1728,6 +1749,7 @@ mod tests {
                 inherited_summary: None,
                 spawn_reason: None,
                 session_summary: None,
+                title: None,
                 orchestration: None,
             },
             messages: vec![Message::user("hello")],

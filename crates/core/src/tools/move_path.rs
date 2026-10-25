@@ -1,14 +1,26 @@
+use std::sync::Arc;
+
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
+use super::ledger::FileLedger;
 use super::{ToolExecutor, rename_path::rename_impl};
 
 pub struct MovePathTool {
     workspace_root: std::path::PathBuf,
+    ledger: Arc<FileLedger>,
 }
 
 impl MovePathTool {
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
-        Self { workspace_root }
+        let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
+        Self::with_ledger(workspace_root, ledger)
+    }
+
+    pub fn with_ledger(workspace_root: std::path::PathBuf, ledger: Arc<FileLedger>) -> Self {
+        Self {
+            workspace_root,
+            ledger,
+        }
     }
 }
 
@@ -30,6 +42,6 @@ impl ToolExecutor for MovePathTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolResult {
-        rename_impl(&self.workspace_root, call, "moved").await
+        rename_impl(&self.workspace_root, call, "moved", &self.ledger).await
     }
 }

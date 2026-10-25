@@ -347,19 +347,24 @@ fn pick_anthropic<'a>(models: &'a [AnthropicModel], wanted: &str) -> Option<&'a 
     })
 }
 
+/// Reads the window from `/v1/models`. OpenAI uses `context_window`; OpenRouter and
+/// OpenAI-compatible gateways such as kenari.id use `context_length`.
 fn openai_context_from_catalog(value: &serde_json::Value, model: &str) -> Option<usize> {
     let data = value.get("data")?.as_array()?;
-    let w = model.to_lowercase();
-    for m in data {
-        let id = m.get("id")?.as_str()?.to_lowercase();
-        if id != w {
-            continue;
-        }
-        if let Some(cw) = m.get("context_window").and_then(|x| x.as_u64()) {
-            return Some(cw as usize);
-        }
-    }
-    None
+    let wanted = model.to_lowercase();
+    data.iter()
+        .filter(|m| {
+            m.get("id")
+                .and_then(|id| id.as_str())
+                .is_some_and(|id| id.to_lowercase() == wanted)
+        })
+        .find_map(|m| {
+            m.get("context_window")
+                .or_else(|| m.get("context_length"))
+                .and_then(|x| x.as_u64())
+                .filter(|&cw| cw > 0)
+                .map(|cw| cw as usize)
+        })
 }
 
 async fn fetch_openai_context(
@@ -666,5 +671,21 @@ mod tests {
         });
         assert_eq!(openai_context_from_catalog(&v, "gpt-4o"), Some(128_000));
         assert_eq!(openai_context_from_catalog(&v, "gpt-4o-mini"), None);
+    }
+
+    #[test]
+    fn openai_compatible_catalog_reads_context_length_and_skips_malformed_entries() {
+        let v: serde_json::Value = serde_json::json!({
+            "data": [
+                { "name": "no id here", "context_length": 1 },
+                { "id": "muse-spark-1-3-contributor:free", "context_length": 1048576 },
+                { "id": "zero-window", "context_length": 0 }
+            ]
+        });
+        assert_eq!(
+            openai_context_from_catalog(&v, "muse-spark-1-3-contributor:free"),
+            Some(1_048_576)
+        );
+        assert_eq!(openai_context_from_catalog(&v, "zero-window"), None);
     }
 }

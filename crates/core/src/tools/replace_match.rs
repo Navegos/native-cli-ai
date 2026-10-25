@@ -1,16 +1,27 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
 use super::ToolExecutor;
+use super::ledger::FileLedger;
 
 pub struct ReplaceMatchTool {
     workspace_root: PathBuf,
+    ledger: Arc<FileLedger>,
 }
 
 impl ReplaceMatchTool {
     pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+        let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
+        Self::with_ledger(workspace_root, ledger)
+    }
+
+    pub fn with_ledger(workspace_root: PathBuf, ledger: Arc<FileLedger>) -> Self {
+        Self {
+            workspace_root,
+            ledger,
+        }
     }
 }
 
@@ -211,19 +222,23 @@ impl ToolExecutor for ReplaceMatchTool {
         }
 
         content.replace_range(absolute_start..absolute_end, new_text);
-        match tokio::fs::write(&canonical, content).await {
-            Ok(()) => ToolResult {
-                call_id: call.id.clone(),
-                success: true,
-                output: format!(
-                    "Replaced match at {}:{}:{} ({} total occurrence(s) of old_text in file)",
-                    canonical.display(),
-                    line,
-                    column,
-                    total_occurrences
-                ),
-                error: None,
-            },
+        match tokio::fs::write(&canonical, &content).await {
+            Ok(()) => {
+                // Exempt from read-before-edit, but keep an earlier read valid.
+                self.ledger.refresh_if_tracked(&canonical, &content);
+                ToolResult {
+                    call_id: call.id.clone(),
+                    success: true,
+                    output: format!(
+                        "Replaced match at {}:{}:{} ({} total occurrence(s) of old_text in file)",
+                        canonical.display(),
+                        line,
+                        column,
+                        total_occurrences
+                    ),
+                    error: None,
+                }
+            }
             Err(err) => ToolResult {
                 call_id: call.id.clone(),
                 success: false,

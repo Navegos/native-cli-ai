@@ -45,6 +45,7 @@ fn write_session(
             inherited_summary: None,
             spawn_reason: None,
             session_summary: None,
+            title: None,
             orchestration: None,
         },
         messages: vec![Message::user("hello")],
