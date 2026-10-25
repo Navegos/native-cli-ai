@@ -1,7 +1,7 @@
 # nca
 
 <p align="center">
-  <img src="docs/images/nca-readme-hero.png" alt="nca — Native CLI AI" width="720" />
+  <img src="docs/images/nca-readme-run.svg" alt="nca: a terminal runner jumps five monsters, one per issue on the next-release list" width="720" />
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#installation">Install</a> &middot;
-  <a href="#whats-new-in-04">What's New</a> &middot;
+  <a href="#whats-new-in-05">What's New</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#core-commands">Commands</a> &middot;
   <a href="#interactive-ux">Interactive UX</a> &middot;
@@ -38,17 +38,21 @@ The product surface is the CLI. No desktop wrapper, no Electron, no browser in t
 - **`/rename`** — name a session. `nca sessions` shows the name.
 - **`[ui] mouse_capture`** — set it to `false` to select text with the terminal. PageUp and PageDown scroll the transcript.
 - **Leaner dependencies** — the unused `genai` dependency is gone, so the build has one `reqwest` version.
+- **Desktop tools on macOS (preview)** — `app_input` drives a background app (keys, text, links) and `screen_record` records or screenshots one window without bringing it to the front. See [Desktop Tools (macOS)](#desktop-tools-macos).
+- **History and recordings in the data folder** — command history and screen recordings live under `~/.local/share/ncacli/workspaces/<id>/`, not in the project. Set `[recording] dir` to store recordings somewhere else.
+- **Faster startup** — context-window lookups are cached for 24 hours, so after the first lookup a run no longer waits on the provider's model list.
+- **Remote MCP servers over HTTP** — set `url` on a `[[mcp.servers]]` entry to use a server that speaks streamable HTTP, and keep its token in the environment variable named by `bearer_token_env`. See [Remote MCP servers](docs/documentation/advanced.md#remote-mcp-servers).
 
 ## What It Does
 
 - Runs coding tasks in an interactive TUI or a line-oriented REPL.
 - Keeps slash commands, the command palette, and `/help` in sync via one registry (palette Enter runs the command).
 - Supports one-shot runs and detached background sessions.
-- Persists session state and event logs under the current workspace.
+- Persists session state and event logs in the product home, one folder per workspace.
 - Exposes machine-readable JSON and NDJSON for automation.
 - Spawns child agents with explicit parent/child lineage and optional git worktrees.
 - Uses MiniMax by default, with OpenAI, Anthropic, OpenRouter, and custom endpoint support.
-- Loads built-in tools plus optional MCP tools from config.
+- Loads built-in tools plus optional MCP tools from config, over stdio or HTTP.
 - Sends **native multimodal** (text + image) messages to MiniMax and other vision-capable models.
 - Auto-summarizes long conversations to prevent token overflow.
 - Discovers skills from `AGENTS.md` sections, filesystem directories, and user-level skill directories.
@@ -265,6 +269,9 @@ See [Orchestration Contract](docs/orchestration.md) for the subprocess-facing su
 | `$XDG_RUNTIME_DIR/nca/<session_id>.sock` | IPC socket path when `XDG_RUNTIME_DIR` is set. |
 | `/tmp/nca/<session_id>.sock` | IPC socket fallback when `XDG_RUNTIME_DIR` is not set. |
 | `~/.local/share/ncacli/workspaces/<id>/cli-index.json` | Cached CLI index for agents and tooling. |
+| `~/.local/share/ncacli/workspaces/<id>/history` | Command history for the REPL and TUI. An older `<workspace>/.nca/.history` is copied here once and left in place. |
+| `~/.local/share/ncacli/workspaces/<id>/recordings/` | Screen recordings and screenshots from `screen_record` (macOS). Set `[recording] dir` to store them elsewhere. |
+| `~/.local/share/ncacli/cache/model-limits.json` | Context-window sizes from the provider's model list, cached for 24 hours. |
 | `.ncarc` | Project instructions file committed with the repo. |
 | `.nca/instructions.md` | Local instructions file. |
 
@@ -339,7 +346,7 @@ The system prompt is layered in this order:
 6. Discovered skills summary
 7. Orchestration context
 
-The built-in tool surface includes filesystem editing, search, diffing, patching, shell execution, web access, `ask_question`, and `spawn_subagent`. MCP tools are loaded dynamically when configured, so the available tool set can grow with your environment.
+The built-in tool surface includes filesystem editing, search, diffing, patching, shell execution, web access, `ask_question`, and `spawn_subagent`. On macOS it also includes `app_input` and `screen_record`. MCP tools are loaded dynamically when configured, so the available tool set can grow with your environment.
 
 ### Search And Edit Tools
 
@@ -351,6 +358,15 @@ Recent search/edit improvements are aimed at making agent file work less brittle
 - `query_symbols` is a literal Rust symbol lookup, not an implicit regex expansion of user input.
 - `edit_file` and `apply_patch` now fail loudly on ambiguous single-match edits instead of silently changing the first occurrence.
 - `replace_match` can edit a specific search result by exact `path`, `line`, and `column`, which makes search -> edit flows much safer.
+
+### Desktop Tools (macOS)
+
+Two tools let the agent work with Mac apps in the background. Both are macOS-only; there is no Windows or Linux equivalent yet.
+
+- **`app_input`** — `list` shows an app's controls through Accessibility, `press` presses a control by its title, `type_text` sends keystrokes to a background app, and `open_url` opens an `http(s)` link in an app without taking focus.
+- **`screen_record`** — `start` records one window for up to `seconds` (1–600, default 60), `stop` ends a recording early, and `screenshot` saves a PNG of one window after an optional delay (0–30 s, default 3).
+
+Both ask for approval by default and are denied in Plan and DontAsk modes. `app_input` needs Accessibility permission and `screen_record` needs Screen Recording permission, both granted to the terminal app. Calculator and Dia are the apps tested so far; other apps are unverified. Parameters are in [Tools](docs/documentation/tools.md).
 
 ## Crate Layout
 
@@ -374,6 +390,29 @@ The shipped app is still a **single binary** (`nca`). The TUI crate owns interac
 - `ContextManager` tracks token usage and auto-summarizes long conversations.
 
 In practice, that means you can start small, branch out when a task gets bigger, and still keep a clean trail of what happened.
+
+## Speed and Memory
+
+Measured on one Mac (Darwin 27). Each CLI answered the same short prompt, "Reply with the word ok." nca used kenari.id with `minimax-m3-1-flash`; the other CLIs used their own default models.
+
+<p align="center">
+  <img src="docs/images/nca-readme-power.svg" alt="RAM footprint per CLI: nca 6.4 MB, Grok CLI 59 MB, Claude Code 162 MB, Cursor CLI not sampled" width="720" />
+</p>
+
+| CLI | Wall | CPU | RAM (macOS footprint) | Notes |
+|---|---|---|---|---|
+| **nca** (release build, cached) | 3.6 s | 0.033 s | 6.4 MB | First event 14–20 ms after launch |
+| Claude Code (`claude -p`) | 3.1 s | 0.80 s | 162 MB | |
+| Grok CLI (`grok -p`) | 6.6 s | 1.77 s | 59 MB | |
+| Cursor CLI (`cursor-agent -p`) | exits in 0.36 s | 0.39 s | not sampled | Not logged in, so startup only |
+
+Wall and CPU are the median of three runs. RAM is one footprint sample per CLI, taken 1.5–3 s into the run. Codex CLI is not included because it is not installed on the test machine.
+
+- Wall time mostly reflects each provider's model, so it is not a fair comparison. CPU and RAM are the fair client-side numbers.
+- The footprint is an estimate from one sample, not a peak.
+- Before the startup cache, each nca run waited 2.5–4.3 s on the provider's model list.
+
+Full method and numbers: [CLI speed and footprint](docs/plans/cli-speed-and-footprint.md).
 
 ## Documentation
 
@@ -400,6 +439,9 @@ Internal design docs:
 - [Orchestration Contract](docs/orchestration.md)
 - [Context Management](docs/context-management.md)
 - [Performance Optimization Research](docs/research/rust-ratatui-optimization.md)
+- [CLI speed and footprint](docs/plans/cli-speed-and-footprint.md)
+- [macOS background input](docs/plans/macos-background-input.md)
+- [macOS window recording](docs/plans/macos-window-recording.md)
 
 ## Funding
 

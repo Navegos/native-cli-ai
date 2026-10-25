@@ -2096,6 +2096,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "core-foundation 0.10.1",
  "criterion",
  "futures-util",
  "globset",

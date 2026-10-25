@@ -101,6 +101,17 @@ last_session_file = ".nca/.last_session"
 auto_compact_on_finish = false      # Auto-summarize when session ends
 ```
 
+### `[recording]` — Screen Recordings
+
+```toml
+[recording]
+# Empty (default) saves recordings in this project's nca data folder:
+# ~/.local/share/ncacli/workspaces/<workspace-id>/recordings/
+# A relative path is taken from the project root, so ".nca/recordings" keeps them inside the
+# project. An absolute path is used as-is.
+dir = ""
+```
+
 ### `[harness]` — System Prompt and Instructions
 
 ```toml

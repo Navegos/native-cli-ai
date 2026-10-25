@@ -270,6 +270,45 @@ In safe mode, `execute_bash` is added to the deny list automatically.
 
 ---
 
+### `app_input` (macOS only)
+
+Act on a running macOS app without bringing it to the front. Registered on macOS only. Prototype: see `docs/plans/macos-background-input.md`.
+
+**Parameters:**
+- `app` (string, required) — Name of a running app with a window, e.g. `Calculator`. If two instances share the name, the first in window order is used
+- `action` (string, required) — `list`, `press`, `type_text`, or `open_url`
+- `title` (string, `press` only) — Title, description, or identifier of the control, matched without regard to case
+- `text` (string, `type_text` only) — Characters to post
+- `url` (string, `open_url` only) — An http or https address. It opens with `open -g`, so the app is not brought to the front
+- `limit` (int, `list` only, default: 200) — Most elements to return
+
+**Behavior:** `list` prints the app's accessibility elements with their titles and values. `press` runs `AXPress` on the first pressable control that matches. `type_text` posts one key press and release per character to the app's process. The tool cannot confirm the app received them, so the output says "posted". `open_url` opens the address in the app and rejects anything that is not http or https. Every result ends with a line saying whether the frontmost app changed.
+
+**Requirements:** Accessibility permission for the terminal or app that runs nca (System Settings > Privacy & Security > Accessibility).
+
+**Approval:** Asks in Default and AcceptEdits modes. Denied in Plan and DontAsk.
+
+---
+
+### `screen_record` (macOS only)
+
+Record one macOS app window to a `.mov` file, or save a still screenshot of it, including while the window is in the background. Registered on macOS only. Prototype: see `docs/plans/macos-window-recording.md`.
+
+**Parameters:**
+- `action` (string, required) — `start`, `stop`, or `screenshot`
+- `app` (string, `start` only, required) — Name of a running app with a window, e.g. `Dia`
+- `seconds` (int, `start` only, default: 60, max: 600) — Time limit. The recording ends by itself at the limit
+- `id` (string, `stop` only, required) — The id that `start` returned
+- `delay` (int, `screenshot` only, default: 3, max: 30) — Seconds to wait before the still image is taken
+
+**Behavior:** `start` records the app's frontmost on-screen window with `screencapture` and returns an id. `stop` ends the recording and waits until the file is written. A stop within the first 2 seconds waits until 2 seconds have passed, because an earlier interrupt can end screencapture without a file. Files go to the project's nca data folder, `~/.local/share/ncacli/workspaces/<workspace-id>/recordings/`, unless `[recording] dir` sets another location. Each `start` result says whether the frontmost app changed. `screenshot` saves one still image of the app's window after the delay, to the same recordings folder, and reports the same check. Recordings still running when the session ends are finished.
+
+**Requirements:** Screen Recording permission for the app that runs nca (System Settings > Privacy & Security > Screen & System Audio Recording). A recording shows what the window shows, including account data.
+
+**Approval:** Asks in Default and AcceptEdits modes. Denied in Plan and DontAsk.
+
+---
+
 ### `run_validation`
 
 Run a safe build, test, or lint command.

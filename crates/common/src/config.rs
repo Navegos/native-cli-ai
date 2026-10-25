@@ -15,6 +15,9 @@ pub struct NcaConfig {
     pub memory: MemoryConfig,
     pub hooks: HookConfig,
     pub web: WebConfig,
+    /// Where screen recordings are saved.
+    #[serde(default)]
+    pub recording: RecordingConfig,
     /// CLI/TUI preferences (e.g. external editor).
     #[serde(default)]
     pub ui: UiConfig,
@@ -145,6 +148,9 @@ impl NcaConfig {
         }
         if let Some(ui) = partial.ui {
             self.ui.merge(ui);
+        }
+        if let Some(recording) = partial.recording {
+            self.recording.merge(recording);
         }
 
         if explicit_model_override {
@@ -327,6 +333,24 @@ impl NcaConfig {
     /// Triggers when: onboarding not completed OR all API keys have been removed.
     pub fn needs_onboarding(&self) -> bool {
         !self.ui.onboarding_completed || !self.provider.any_api_key_present()
+    }
+}
+
+/// Screen recordings made by the `screen_record` tool.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RecordingConfig {
+    /// Where recordings are saved. Empty keeps them in the project's nca data folder. A relative
+    /// path is taken from the project root, so `.nca/recordings` keeps them inside the project.
+    /// An absolute path is used as-is.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dir: String,
+}
+
+impl RecordingConfig {
+    fn merge(&mut self, partial: PartialRecordingConfig) {
+        if let Some(dir) = partial.dir {
+            self.dir = dir;
+        }
     }
 }
 
@@ -546,6 +570,29 @@ pub fn resolve_sessions_dir(config: &NcaConfig, workspace_root: &Path) -> PathBu
     workspace_root.join(configured)
 }
 
+/// Per-workspace REPL command history under the product home.
+pub fn workspace_history_path(workspace_root: &Path) -> Result<PathBuf, WorkspaceCacheError> {
+    Ok(workspace_cache_dir(workspace_root)?.join("history"))
+}
+
+/// Where screen recordings are saved for a project. An empty `configured` value is the
+/// project's folder under the nca data root, `<data>/workspaces/<id>/recordings`. A relative
+/// path is taken from the project root, and an absolute path is used as-is.
+pub fn resolve_recordings_dir(
+    configured: &str,
+    workspace_root: &Path,
+) -> Result<PathBuf, WorkspaceCacheError> {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        return Ok(workspace_cache_dir(workspace_root)?.join("recordings"));
+    }
+    let path = Path::new(configured);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    Ok(workspace_root.join(path))
+}
+
 /// Resolve the last-session pointer path.
 pub fn resolve_last_session_path(config: &NcaConfig, workspace_root: &Path) -> PathBuf {
     let configured = &config.session.last_session_file;
@@ -673,6 +720,23 @@ pub fn migrate_workspace_data_if_needed(
             to = %sessions_dest.display(),
             "migrated session store to product home"
         );
+    }
+
+    // Command history used to live in the project's `.nca/.history`. Copy it once; the
+    // original stays, as with the other legacy copies.
+    if let Ok(history_dest) = workspace_history_path(workspace_root) {
+        let history_src = workspace_root.join(".nca").join(".history");
+        if !history_dest.exists()
+            && history_src.is_file()
+            && std::fs::copy(&history_src, &history_dest).is_ok()
+        {
+            migrated = true;
+            tracing::info!(
+                from = %history_src.display(),
+                to = %history_dest.display(),
+                "migrated command history to product home"
+            );
+        }
     }
 
     // Also pull sessions from the early ~/.aris/ncacli prototype if present.
@@ -1786,7 +1850,13 @@ struct PartialNcaConfig {
     memory: Option<PartialMemoryConfig>,
     hooks: Option<PartialHookConfig>,
     web: Option<PartialWebConfig>,
+    recording: Option<PartialRecordingConfig>,
     ui: Option<PartialUiConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct PartialRecordingConfig {
+    dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -2179,6 +2249,43 @@ mod tests {
     }
 
     #[test]
+    fn recordings_default_to_the_project_data_folder() {
+        let home = tempfile::tempdir().expect("home");
+        let ws = tempfile::tempdir().expect("ws");
+        let _guard = EnvGuard::set(&[("NCA_HOME", Some(home.path().to_str().unwrap()))]);
+        let dir = resolve_recordings_dir("", ws.path()).expect("recordings dir");
+        let (id, _) = workspace_cache_id(ws.path()).expect("workspace id");
+        assert_eq!(
+            dir,
+            home.path().join("workspaces").join(id).join("recordings")
+        );
+        assert!(!dir.starts_with(ws.path()));
+    }
+
+    #[test]
+    fn recordings_dir_can_be_inside_the_project_or_elsewhere() {
+        let home = tempfile::tempdir().expect("home");
+        let ws = tempfile::tempdir().expect("ws");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let _guard = EnvGuard::set(&[("NCA_HOME", Some(home.path().to_str().unwrap()))]);
+        let inside = resolve_recordings_dir(".nca/recordings", ws.path()).expect("relative");
+        assert_eq!(inside, ws.path().join(".nca/recordings"));
+        let absolute = elsewhere.path().to_str().unwrap();
+        let outside = resolve_recordings_dir(absolute, ws.path()).expect("absolute");
+        assert_eq!(outside, elsewhere.path());
+    }
+
+    #[test]
+    fn recording_dir_loads_from_the_project_config_file() {
+        let ws = tempfile::tempdir().expect("ws");
+        let path = workspace_config_path(ws.path());
+        std::fs::create_dir_all(path.parent().unwrap()).expect("local dir");
+        std::fs::write(&path, "[recording]\ndir = \".nca/recordings\"\n").expect("write config");
+        let config = NcaConfig::load_workspace_file(ws.path()).expect("load");
+        assert_eq!(config.recording.dir, ".nca/recordings");
+    }
+
+    #[test]
     fn migrate_copies_legacy_project_sessions() {
         let home = tempfile::tempdir().expect("home");
         let ws = tempfile::tempdir().expect("ws");
@@ -2198,6 +2305,22 @@ mod tests {
         assert!(resolve_memory_path(&NcaConfig::default(), ws.path()).exists());
         // Legacy left in place
         assert!(legacy.join("s1.json").exists());
+    }
+
+    #[test]
+    fn migrate_copies_legacy_project_history() {
+        let home = tempfile::tempdir().expect("home");
+        let ws = tempfile::tempdir().expect("ws");
+        let _guard = EnvGuard::set(&[("NCA_HOME", Some(home.path().to_str().unwrap()))]);
+        std::fs::create_dir_all(ws.path().join(".nca")).unwrap();
+        std::fs::write(ws.path().join(".nca/.history"), "first\nsecond\n").unwrap();
+
+        migrate_workspace_data_if_needed(ws.path()).expect("migrate");
+        let copied = workspace_history_path(ws.path()).expect("history path");
+        assert!(copied.starts_with(home.path()));
+        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "first\nsecond\n");
+        // The project copy stays; removing it is a separate step.
+        assert!(ws.path().join(".nca/.history").exists());
     }
 
     #[test]

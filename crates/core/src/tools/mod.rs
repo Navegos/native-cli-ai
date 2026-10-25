@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+pub mod app_input;
 pub mod apply_patch;
 pub mod ask_question;
 pub mod bash;
@@ -17,6 +19,8 @@ pub mod move_path;
 pub mod rename_path;
 pub mod replace_match;
 pub mod run_validation;
+#[cfg(target_os = "macos")]
+pub mod screen_record;
 pub mod search;
 pub mod skill_hints;
 pub mod spawn_subagent;
@@ -32,7 +36,7 @@ pub use update_todos::{TodoStore, UpdateTodosTool, validate_todos};
 
 use std::sync::Arc;
 
-use nca_common::config::WebConfig;
+use nca_common::config::{RecordingConfig, WebConfig};
 use nca_common::tool::{ToolCall, ToolDefinition, ToolResult};
 
 use ledger::FileLedger;
@@ -90,6 +94,7 @@ impl ToolRegistry {
     pub fn with_default_full_tools(
         workspace_root: std::path::PathBuf,
         web_config: WebConfig,
+        recording: RecordingConfig,
     ) -> Self {
         // One ledger per registry: a read by any tool unlocks edits by the others.
         let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
@@ -132,9 +137,16 @@ impl ToolRegistry {
             workspace_root.clone(),
             ledger,
         )));
+        #[cfg(target_os = "macos")]
+        registry.register(Box::new(screen_record::ScreenRecordTool::new(
+            nca_common::config::resolve_recordings_dir(&recording.dir, &workspace_root)
+                .map_err(|error| error.to_string()),
+        )));
         registry.register(Box::new(run_validation::RunValidationTool::new(
             workspace_root,
         )));
+        #[cfg(target_os = "macos")]
+        registry.register(Box::new(app_input::AppInputTool));
         registry
     }
 
@@ -246,7 +258,50 @@ mod tests {
         // The supervisor passes a canonical root; copy, rename and delete
         // compare paths against it without canonicalizing it themselves.
         let root = dir.path().canonicalize().unwrap();
-        ToolRegistry::with_default_full_tools(root, WebConfig::default())
+        ToolRegistry::with_default_full_tools(
+            root,
+            WebConfig::default(),
+            RecordingConfig::default(),
+        )
+    }
+
+    /// The macOS tools are registered, and the registry runs them through their own argument
+    /// checks. Both calls below fail before touching the screen.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_tools_are_registered_and_dispatch_through_the_registry() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let registry = full_registry(&dir);
+        let names: Vec<String> = registry
+            .definitions()
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect();
+        assert!(names.iter().any(|name| name == "app_input"));
+        assert!(names.iter().any(|name| name == "screen_record"));
+
+        let stop = nca_common::tool::ToolCall {
+            id: "call-stop".into(),
+            name: "screen_record".into(),
+            input: serde_json::json!({"action": "stop", "id": "rec-9"}),
+        };
+        let result = registry.execute(&stop).await;
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .unwrap_or_default()
+                .contains("No active recording")
+        );
+
+        let press = nca_common::tool::ToolCall {
+            id: "call-press".into(),
+            name: "app_input".into(),
+            input: serde_json::json!({"action": "press"}),
+        };
+        let result = registry.execute(&press).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap_or_default().contains("`app`"));
     }
 
     fn read_input(path: &str) -> serde_json::Value {

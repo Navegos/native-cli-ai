@@ -143,7 +143,11 @@ impl Supervisor {
         let mut tools = if cfg.safe_mode {
             ToolRegistry::with_default_readonly_tools(workspace_root.clone(), config.web.clone())
         } else {
-            ToolRegistry::with_default_full_tools(workspace_root.clone(), config.web.clone())
+            ToolRegistry::with_default_full_tools(
+                workspace_root.clone(),
+                config.web.clone(),
+                config.recording.clone(),
+            )
         };
         if !config.mcp.servers.is_empty() && (!cfg.safe_mode || config.mcp.expose_in_safe_mode) {
             match load_mcp_tools(&workspace_root, &config.mcp.servers) {

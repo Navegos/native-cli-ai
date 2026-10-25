@@ -7,15 +7,18 @@
 //! - **MiniMax**: the Anthropic-compatible host (`api.minimax.io/anthropic`) does not expose
 //!   `/v1/models` (404); context limits stay on the built-in [`crate::model_limits`] table.
 //!
-//! Successful catalog responses are cached in memory per process. Tune with
-//! `NCA_CONTEXT_API_CACHE_TTL_SECS` (default `3600`). Use `NCA_SKIP_CONTEXT_API=1` to disable
+//! Successful lookups are cached on disk under the product home for a day, so a run does not
+//! wait on the provider's model catalog. Catalog responses are also cached in memory per process
+//! (`NCA_CONTEXT_API_CACHE_TTL_SECS`, default `3600`). Use `NCA_SKIP_CONTEXT_API=1` to disable
 //! lookups entirely.
 
 use crate::model_limits::ModelLimits;
 use nca_common::config::{NcaConfig, ProviderCompatibility, ProviderKind};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -80,27 +83,62 @@ fn openai_catalog_cache() -> &'static Mutex<Option<OpenAiCatalogEntry>> {
 }
 
 pub async fn resolve_model_limits(config: &NcaConfig, model: &str) -> ModelLimits {
+    resolve_model_limits_in(config, model, disk_cache_path().as_deref()).await
+}
+
+/// `resolve_model_limits` with the cache file given explicitly, so tests need no environment.
+async fn resolve_model_limits_in(
+    config: &NcaConfig,
+    model: &str,
+    cache_file: Option<&Path>,
+) -> ModelLimits {
     let static_limits = ModelLimits::for_model(model);
-
-    if std::env::var("NCA_SKIP_CONTEXT_API").ok().as_deref() == Some("1") {
+    if !api_lookup_enabled(config) {
         return static_limits;
     }
-
-    if !config.memory.context.auto_detect_context_window
-        || !config.memory.context.query_provider_models_api
-    {
-        return static_limits;
+    let key = limits_cache_key(config, model);
+    if let Some(cached) = cache_file.and_then(|path| read_disk_cache(path, &key)) {
+        tracing::debug!(model = %model, "context window from the disk cache");
+        return cached;
     }
+    match query_provider_limits(config, model).await {
+        Some(cw) if cw > 0 => {
+            tracing::info!(
+                model = %model,
+                context_window = cw,
+                "context window from provider models API"
+            );
+            let limits = ModelLimits {
+                context_window: cw,
+                max_output_tokens: static_limits.max_output_tokens,
+            };
+            if let Some(path) = cache_file {
+                write_disk_cache(path, &key, &limits);
+            }
+            limits
+        }
+        _ => static_limits,
+    }
+}
 
+/// Whether this run may ask the provider for a context window at all.
+fn api_lookup_enabled(config: &NcaConfig) -> bool {
+    std::env::var("NCA_SKIP_CONTEXT_API").ok().as_deref() != Some("1")
+        && config.memory.context.auto_detect_context_window
+        && config.memory.context.query_provider_models_api
+}
+
+/// Asks the active provider for the model's context window. `None` when the provider has no
+/// lookup, the key is missing, or the request fails.
+async fn query_provider_limits(config: &NcaConfig, model: &str) -> Option<usize> {
     let client = match http_client() {
         Ok(c) => c,
         Err(e) => {
             tracing::debug!(error = %e, "context API: failed to build HTTP client");
-            return static_limits;
+            return None;
         }
     };
-
-    let from_api = match config.provider.default {
+    match config.provider.default {
         ProviderKind::OpenRouter => {
             let base = config.provider.openrouter.base_url.trim_end_matches('/');
             let url = format!("{base}/v1/models");
@@ -108,34 +146,25 @@ pub async fn resolve_model_limits(config: &NcaConfig, model: &str) -> ModelLimit
             fetch_openrouter_context(&client, &url, model, key.as_deref()).await
         }
         ProviderKind::Anthropic => {
-            let key = match config.provider.anthropic.resolve_api_key() {
-                Some(k) => k,
-                None => {
-                    tracing::debug!("context API: anthropic selected but no API key");
-                    return static_limits;
-                }
+            let Some(key) = config.provider.anthropic.resolve_api_key() else {
+                tracing::debug!("context API: anthropic selected but no API key");
+                return None;
             };
             let base = config.provider.anthropic.base_url.trim_end_matches('/');
             fetch_anthropic_context(&client, base, &key, model).await
         }
         ProviderKind::OpenAi => {
-            let key = match config.provider.openai.resolve_api_key() {
-                Some(k) => k,
-                None => {
-                    tracing::debug!("context API: openai selected but no API key");
-                    return static_limits;
-                }
+            let Some(key) = config.provider.openai.resolve_api_key() else {
+                tracing::debug!("context API: openai selected but no API key");
+                return None;
             };
             let base = config.provider.openai.base_url.trim_end_matches('/');
             fetch_openai_context(&client, base, &key, model).await
         }
         ProviderKind::Custom => {
-            let key = match config.provider.custom.resolve_api_key() {
-                Some(k) => k,
-                None => {
-                    tracing::debug!("context API: custom selected but no API key");
-                    return static_limits;
-                }
+            let Some(key) = config.provider.custom.resolve_api_key() else {
+                tracing::debug!("context API: custom selected but no API key");
+                return None;
             };
             let base = config.provider.custom.base_url.trim_end_matches('/');
             match config.provider.custom.compatibility {
@@ -148,21 +177,91 @@ pub async fn resolve_model_limits(config: &NcaConfig, model: &str) -> ModelLimit
             }
         }
         ProviderKind::MiniMax => None,
-    };
+    }
+}
 
-    match from_api {
-        Some(cw) if cw > 0 => {
-            tracing::info!(
-                model = %model,
-                context_window = cw,
-                "context window from provider models API"
-            );
-            ModelLimits {
-                context_window: cw,
-                max_output_tokens: static_limits.max_output_tokens,
-            }
-        }
-        _ => static_limits,
+/// Cache key for one provider's context window: the provider, its endpoint, and the model.
+/// The API key is not part of it.
+fn limits_cache_key(config: &NcaConfig, model: &str) -> String {
+    let endpoint = match config.provider.default {
+        ProviderKind::OpenRouter => config.provider.openrouter.base_url.clone(),
+        ProviderKind::Anthropic => config.provider.anthropic.base_url.clone(),
+        ProviderKind::OpenAi => config.provider.openai.base_url.clone(),
+        ProviderKind::Custom => format!(
+            "{}|{:?}",
+            config.provider.custom.base_url, config.provider.custom.compatibility
+        ),
+        ProviderKind::MiniMax => String::new(),
+    };
+    format!(
+        "{:?}|{}|{}",
+        config.provider.default,
+        endpoint.trim_end_matches('/'),
+        model
+    )
+}
+
+/// How long a resolved context window stays on disk before the provider is asked again.
+const DISK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// One cached lookup, stored so the next run can skip the network call.
+#[derive(Debug, Serialize, Deserialize)]
+struct DiskEntry {
+    context_window: usize,
+    max_output_tokens: usize,
+    fetched_at: u64,
+}
+
+/// The disk cache file: `<product home>/cache/model-limits.json`.
+fn disk_cache_path() -> Option<PathBuf> {
+    nca_common::config::nca_product_home().map(|home| home.join("cache").join("model-limits.json"))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// The cached limits for `key`, if the entry is younger than `DISK_CACHE_TTL`.
+fn read_disk_cache(path: &Path, key: &str) -> Option<ModelLimits> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let map: BTreeMap<String, DiskEntry> = serde_json::from_str(&text).ok()?;
+    let entry = map.get(key)?;
+    let age = unix_now().saturating_sub(entry.fetched_at);
+    (age < DISK_CACHE_TTL.as_secs()).then_some(ModelLimits {
+        context_window: entry.context_window,
+        max_output_tokens: entry.max_output_tokens,
+    })
+}
+
+/// Stores `limits` under `key` and drops expired entries. Failures are ignored, because the
+/// cache only saves time.
+fn write_disk_cache(path: &Path, key: &str, limits: &ModelLimits) {
+    let now = unix_now();
+    let mut map: BTreeMap<String, DiskEntry> = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    map.retain(|_, entry| now.saturating_sub(entry.fetched_at) < DISK_CACHE_TTL.as_secs());
+    map.insert(
+        key.to_string(),
+        DiskEntry {
+            context_window: limits.context_window,
+            max_output_tokens: limits.max_output_tokens,
+            fetched_at: now,
+        },
+    );
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    // Write a temporary file and rename it, so a reader never sees a half-written cache.
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    if let Ok(text) = serde_json::to_string(&map)
+        && std::fs::write(&tmp, text).is_ok()
+    {
+        let _ = std::fs::rename(&tmp, path);
     }
 }
 
@@ -687,5 +786,55 @@ mod tests {
             Some(1_048_576)
         );
         assert_eq!(openai_context_from_catalog(&v, "zero-window"), None);
+    }
+}
+
+#[cfg(test)]
+mod disk_cache_tests {
+    use super::*;
+
+    #[test]
+    fn disk_cache_keeps_fresh_entries_and_drops_expired_ones() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("cache").join("model-limits.json");
+        let key = "custom|https://kenari.id|m";
+        let limits = ModelLimits {
+            context_window: 1_000_000,
+            max_output_tokens: 8192,
+        };
+        write_disk_cache(&path, key, &limits);
+        let back = read_disk_cache(&path, key).expect("fresh entry");
+        assert_eq!(back.context_window, 1_000_000);
+        assert_eq!(back.max_output_tokens, 8192);
+        assert!(read_disk_cache(&path, "other").is_none());
+
+        // An entry older than the TTL is ignored.
+        let mut map: BTreeMap<String, DiskEntry> =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        map.get_mut(key).expect("entry").fetched_at = 0;
+        std::fs::write(&path, serde_json::to_string(&map).expect("json")).expect("write");
+        assert!(read_disk_cache(&path, key).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_cached_context_window_is_used_without_asking_the_provider() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("model-limits.json");
+        let mut config = NcaConfig::default();
+        config.provider.default = ProviderKind::Custom;
+        config.provider.custom.base_url = "http://127.0.0.1:9".into();
+        config.provider.custom.api_key = Some("test-key".into());
+        let key = limits_cache_key(&config, "test-model");
+        write_disk_cache(
+            &path,
+            &key,
+            &ModelLimits {
+                context_window: 777_000,
+                max_output_tokens: 4096,
+            },
+        );
+        // Nothing listens on port 9, so a network call would fall back to the static table.
+        let limits = resolve_model_limits_in(&config, "test-model", Some(&path)).await;
+        assert_eq!(limits.context_window, 777_000);
     }
 }
