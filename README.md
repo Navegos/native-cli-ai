@@ -6,12 +6,12 @@
 
 <p align="center">
   <strong>Rust-native coding agent. Single binary. Terminal-first.</strong><br />
-  <sub>v0.5 — read-before-edit, resilient provider calls, paged reads</sub>
+  <sub>v0.5.0 — read-before-edit, resilient provider calls, paged reads</sub>
 </p>
 
 <p align="center">
   <a href="#installation">Install</a> &middot;
-  <a href="#whats-new-in-05">What's New</a> &middot;
+  <a href="#whats-new-in-050">What's New</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#core-commands">Commands</a> &middot;
   <a href="#interactive-ux">Interactive UX</a> &middot;
@@ -27,7 +27,7 @@ It is meant for people who like their AI tooling close to the terminal: fast to 
 
 The product surface is the CLI. No desktop wrapper, no Electron, no browser in the default path.
 
-## What's New in 0.5
+## What's New in 0.5.0
 
 - **Read before edit** — `edit_file`, `apply_patch`, and overwriting `write_file` need a `read_file` of an existing file earlier in the session, and the file must be unchanged since. New files are not affected.
 - **Paged reads, capped output** — `read_file` takes `start_line` and `end_line` and returns 2,000 lines per call by default. Tool output is capped at 30,000 characters.
@@ -393,7 +393,7 @@ In practice, that means you can start small, branch out when a task gets bigger,
 
 ## Speed and Memory
 
-Measured on one Mac (Darwin 27). Each CLI answered the same short prompt, "Reply with the word ok." nca used kenari.id with `minimax-m3-1-flash`; the other CLIs used their own default models.
+Measured on one Mac (Darwin 27). Each CLI answered the same short prompt, "Reply with the word ok." nca used kenari.id with `minimax-m3-1-flash`; the other CLIs used their own default models. These numbers come from the build before 0.5.0 landed and have not been re-measured on 0.5.0 yet.
 
 <p align="center">
   <img src="docs/images/nca-readme-power.svg" alt="RAM footprint per CLI: nca 6.4 MB, Grok CLI 59 MB, Claude Code 162 MB, Cursor CLI not sampled" width="720" />
