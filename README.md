@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Rust-native coding agent. Single binary. Terminal-first.</strong><br />
-  <sub>v0.4 — dedicated TUI crate, unified product home, live busy activity</sub>
+  <sub>v0.5 — read-before-edit, resilient provider calls, paged reads</sub>
 </p>
 
 <p align="center">
@@ -27,14 +27,17 @@ It is meant for people who like their AI tooling close to the terminal: fast to 
 
 The product surface is the CLI. No desktop wrapper, no Electron, no browser in the default path.
 
-## What's New in 0.4
+## What's New in 0.5
 
-- **Dedicated `nca-tui` crate** — full-screen transcript, overlays, sidebar, and REPL live in their own crate; `nca-cli` stays the thin entrypoint.
-- **Unified product home** — sessions, memory, and CLI index land under `$NCA_HOME` / `$XDG_DATA_HOME/ncacli` / `~/.local/share/ncacli` (legacy `~/.nca` still migrates).
-- **Live busy activity** — status bar and transcript footer show thinking / streaming / tool path with elapsed time so long model waits never look stuck.
-- **Soft provider retries** — empty-response retries stay in thinking state instead of flipping to a red error mid-turn.
-- **Tool path previews** — in-flight `write_file` / `edit_file` / bash calls show the path or command one-liner.
-- **Multi-OS releases** — GitHub Releases build Linux, macOS, and Windows (x86_64 + ARM where available).
+- **Read before edit** — `edit_file`, `apply_patch`, and overwriting `write_file` need a `read_file` of an existing file earlier in the session, and the file must be unchanged since. New files are not affected.
+- **Paged reads, capped output** — `read_file` takes `start_line` and `end_line` and returns 2,000 lines per call by default. Tool output is capped at 30,000 characters.
+- **Resilient provider calls** — rate limits, 5xx errors, and dropped connections retry with backoff, honoring `Retry-After`. Stream errors are reported instead of shown as answers, and stalled connections time out.
+- **Loop control** — a repeated identical tool call gets a nudge, then stops the turn. A turn that runs out of budget ends with a summary. Edits get one reminder to run `run_validation`.
+- **Esc interrupts a pending request** — cancel works while the provider has not answered yet.
+- **Windows input fixed** — key release events no longer double every keystroke.
+- **`/rename`** — name a session. `nca sessions` shows the name.
+- **`[ui] mouse_capture`** — set it to `false` to select text with the terminal. PageUp and PageDown scroll the transcript.
+- **Leaner dependencies** — the unused `genai` dependency is gone, so the build has one `reqwest` version.
 
 ## What It Does
 
