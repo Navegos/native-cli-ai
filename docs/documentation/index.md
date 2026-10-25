@@ -2,7 +2,7 @@
 
 A native-first, Rust-powered AI coding assistant that runs entirely in the terminal. Zero JavaScript dependencies, sub-100ms startup, and a full agent loop for code generation, file editing, command execution, and project understanding.
 
-**Current release: v0.4**
+**Current release: v0.5**
 
 ## What is nca?
 

@@ -182,14 +182,15 @@ pub struct Repl {
     runtime: SessionRuntime,
     prompt: NcaPrompt,
     run_mode: bool,
-    history_path: std::path::PathBuf,
+    history_path: Option<std::path::PathBuf>,
     agent_profile: AgentProfile,
     current_agent_label: String,
 }
 
 impl Repl {
     pub fn new(runtime: SessionRuntime, safe_mode: bool, run_mode: bool) -> Self {
-        let history_path = runtime.workspace_root().join(".nca/.history");
+        let history_path =
+            nca_common::config::workspace_history_path(runtime.workspace_root()).ok();
         let agent_profile = AgentProfile::default();
         let current_agent_label = format!("@{}", agent_profile.label());
         Self {
@@ -543,9 +544,11 @@ impl Repl {
             .with_ansi_colors(true);
 
         // Try to load history from disk
-        if let Some(parent) = self.history_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-            if let Ok(history) = FileBackedHistory::with_file(100, self.history_path.clone()) {
+        if let Some(path) = &self.history_path {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            if let Ok(history) = FileBackedHistory::with_file(100, path.clone()) {
                 builder = builder.with_history(Box::new(history));
             }
         }
