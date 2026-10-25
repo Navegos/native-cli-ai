@@ -108,11 +108,27 @@ enabled = true
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | **required** | Server identifier (used in tool names) |
-| `command` | string | **required** | Command to start the server |
+| `command` | string | — | Command that starts a local (stdio) server. Required unless `url` is set |
 | `args` | string[] | `[]` | Command arguments |
 | `env` | map | `{}` | Environment variables |
 | `cwd` | string | — | Working directory |
+| `url` | string | — | Endpoint of a remote server that speaks streamable HTTP. Use it instead of `command` |
+| `headers` | map | `{}` | Extra request headers for a remote server. Put only non-secret values here |
+| `bearer_token_env` | string | — | Name of an environment variable that holds the bearer token. The token itself never goes in the config |
 | `enabled` | bool | `true` | Whether the server is active |
+
+### Remote MCP servers
+
+A server that speaks streamable HTTP is configured with `url`. Keep its token in an environment variable:
+
+```toml
+[[mcp.servers]]
+name = "rankmyseo"
+url = "https://api.rankmyseo.com/mcp"
+bearer_token_env = "RANKMYSEO_TOKEN"
+```
+
+Without a token, that server offers only its `register` tool, which mints a guest token. Save the token into `RANKMYSEO_TOKEN`.
 
 ### How MCP Tools Appear
 

@@ -150,12 +150,17 @@ impl Supervisor {
             )
         };
         if !config.mcp.servers.is_empty() && (!cfg.safe_mode || config.mcp.expose_in_safe_mode) {
-            match load_mcp_tools(&workspace_root, &config.mcp.servers) {
-                Ok(mcp_tools) => {
+            // Discovery may block on a child process or HTTP, so it runs off the async runtime.
+            let mcp_servers = config.mcp.servers.clone();
+            let mcp_root = workspace_root.clone();
+            match tokio::task::spawn_blocking(move || load_mcp_tools(&mcp_root, &mcp_servers)).await
+            {
+                Ok(Ok(mcp_tools)) => {
                     for tool in mcp_tools {
                         tools.register(tool);
                     }
                 }
+                Ok(Err(error)) => tracing::warn!("failed to load MCP tools: {}", error),
                 Err(error) => tracing::warn!("failed to load MCP tools: {}", error),
             }
         }
