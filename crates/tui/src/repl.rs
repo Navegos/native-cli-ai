@@ -845,6 +845,18 @@ impl Repl {
                     ),
                 }
             }
+            "/rename" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    out.eprintln("[rename] usage: /rename <session name>");
+                } else {
+                    self.runtime.set_title(name);
+                    match self.runtime.save().await {
+                        Ok(()) => out.println(&format!("Session renamed to \"{name}\"")),
+                        Err(error) => out.eprintln(&format!("[rename] could not save session: {error}")),
+                    }
+                }
+            }
             "/todos" => {
                 let lines = match &out {
                     ReplOutput::Tui(st) => st
@@ -1902,6 +1914,7 @@ impl Repl {
         let version_tx = shared_state.version_tx();
         let banner = self.run_mode;
         let cancel_flag = self.runtime.cancel_handle();
+        let mouse_capture = self.runtime.config().ui.mouse_capture;
         let ui = tokio::task::spawn_blocking(move || {
             run_blocking(
                 st,
@@ -1912,6 +1925,7 @@ impl Repl {
                 Some(approval_for_tui),
                 banner,
                 Some(cancel_flag),
+                mouse_capture,
             )
         });
 

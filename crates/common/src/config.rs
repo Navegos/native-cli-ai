@@ -348,10 +348,18 @@ pub struct UiConfig {
     /// Whether the user has completed the first-run onboarding flow.
     #[serde(default)]
     pub onboarding_completed: bool,
+    /// Capture mouse wheel and clicks in the TUI. Set to `false` to select and copy text with
+    /// the terminal's own mouse selection, at the cost of wheel scrolling inside the TUI.
+    #[serde(default = "default_mouse_capture")]
+    pub mouse_capture: bool,
 }
 
 fn default_scroll_speed() -> u16 {
     3
+}
+
+fn default_mouse_capture() -> bool {
+    true
 }
 
 impl Default for UiConfig {
@@ -362,6 +370,7 @@ impl Default for UiConfig {
             hide_tips: false,
             scroll_speed: default_scroll_speed(),
             onboarding_completed: false,
+            mouse_capture: default_mouse_capture(),
         }
     }
 }
@@ -382,6 +391,9 @@ impl UiConfig {
         }
         if let Some(onboarding_completed) = partial.onboarding_completed {
             self.onboarding_completed = onboarding_completed;
+        }
+        if let Some(mouse_capture) = partial.mouse_capture {
+            self.mouse_capture = mouse_capture;
         }
     }
 }
@@ -1766,6 +1778,7 @@ struct PartialUiConfig {
     hide_tips: Option<bool>,
     scroll_speed: Option<u16>,
     onboarding_completed: Option<bool>,
+    mouse_capture: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

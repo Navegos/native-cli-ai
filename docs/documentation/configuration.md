@@ -199,6 +199,7 @@ editor = ""              # External editor command (e.g., "vim", "code --wait")
 theme = ""               # UI theme (optional)
 hide_tips = false         # Hide usage tips
 scroll_speed = 3          # Scroll speed in TUI
+mouse_capture = true      # false lets the terminal select and copy text (wheel scrolling is off; use PageUp/PageDown)
 onboarding_completed = false
 ```
 

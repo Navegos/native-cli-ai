@@ -64,8 +64,10 @@ Read the contents of a file in the workspace.
 
 **Parameters:**
 - `path` (string, required) — File path relative to workspace root
+- `start_line` (integer, optional) — First line to return, 1-based (default 1)
+- `end_line` (integer, optional) — Last line to return, inclusive (default: up to 2000 lines from `start_line`)
 
-**Behavior:** Reads the file asynchronously. The path must resolve within the workspace boundary.
+**Behavior:** Reads the file asynchronously. The path must resolve within the workspace boundary. A file longer than the returned window starts with a header such as `[showing lines 1-2000 of 5000. Pass start_line to continue.]`. Each read records the file so later edits can check it (see below).
 
 ---
 
@@ -149,6 +151,8 @@ Create or overwrite a file inside the workspace.
 - `path` (string, required) — File path relative to workspace
 - `content` (string, required) — File contents
 
+**Read before overwrite:** writing an existing file requires a `read_file` of it earlier in the session, and the file must be unchanged since that read. New files need no read.
+
 **Behavior:** Creates parent directories if needed. Path must resolve within workspace.
 
 ---
@@ -190,6 +194,8 @@ Replace a specific string in an existing file.
 - `replace_all` (bool, optional) — Replace all occurrences
 
 Similar to `apply_patch` but for a single edit.
+
+**Read before edit:** an existing file must have been read with `read_file` earlier in the session, and must be unchanged since. Otherwise the edit is rejected with a message that says to read the file first, or to read it again after an outside change.
 
 ---
 

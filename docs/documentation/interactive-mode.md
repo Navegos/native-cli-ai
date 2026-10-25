@@ -123,6 +123,7 @@ Available agent profiles:
 |---------|-------------|
 | `/compact` | Compact session context (summarize and trim history) |
 | `/copy` | Copy the latest assistant response to the clipboard (TUI) |
+| `/rename <name>` | Name this session so it is easy to find in session lists (`nca sessions` shows the name) |
 | `/todos` | Show the session todo list (sidebar also shows a compact view) |
 | `/thinking` | Toggle thinking/reasoning visibility |
 | `/sessions` | List and switch between sessions |
@@ -181,6 +182,7 @@ Available agent profiles:
 | `Ctrl+L` | Clear screen |
 | `Ctrl+Q` | Exit |
 | `Mouse wheel` | Scroll output |
+| `PageUp` / `PageDown` | Scroll the transcript one page (works without the mouse) |
 | `End` | Jump to bottom of transcript (on empty input) |
 
 ### Agent and Model
@@ -253,6 +255,7 @@ Mouse drag-selection is limited while the TUI owns the terminal. Use:
 
 - `/copy` or `Ctrl+Shift+C` to copy the latest assistant response
 - Native terminal **Shift+drag** selection as a fallback when you need arbitrary transcript text
+- `[ui] mouse_capture = false` in config to let the terminal own the mouse, so plain drag-select works. In that mode scroll with `PageUp` / `PageDown`
 
 ## Session Todos
 

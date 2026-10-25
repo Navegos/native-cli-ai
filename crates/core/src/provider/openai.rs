@@ -5,7 +5,9 @@ use nca_common::message::Message;
 use nca_common::tool::ToolDefinition;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
-use super::openai_compat::{map_provider_error, openai_request_body, spawn_openai_stream};
+use super::openai_compat::{
+    map_provider_error, map_send_error, openai_request_body, spawn_openai_stream,
+};
 use super::{Provider, ProviderError, StreamChunk};
 
 pub struct OpenAiProvider {
@@ -34,7 +36,7 @@ impl OpenAiProvider {
             })?,
         );
 
-        let client = reqwest::Client::builder()
+        let client = super::client_builder()
             .default_headers(headers)
             .build()
             .map_err(|err| {
@@ -86,12 +88,13 @@ impl Provider for OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|err| ProviderError::RequestFailed(err.to_string()))?;
+            .map_err(map_send_error)?;
 
         let status = response.status();
         if !status.is_success() {
+            let headers = response.headers().clone();
             let body_text = response.text().await.unwrap_or_default();
-            return Err(map_provider_error(status, body_text));
+            return Err(map_provider_error(status, &headers, body_text));
         }
 
         Ok(spawn_openai_stream(response, "openai"))
@@ -101,10 +104,59 @@ impl Provider for OpenAiProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::test_support::{collect_chunks, spawn_sse_server};
+    use crate::provider::test_support::{collect_chunks, spawn_raw_http_server, spawn_sse_server};
     use nca_common::message::Message;
     use nca_common::tool::ToolDefinition;
     use serde_json::json;
+
+    async fn chat_error(raw_response: &str) -> ProviderError {
+        let mut config = NcaConfig::default();
+        config.provider.openai.api_key = Some("openai-test-key".into());
+        config.provider.openai.base_url = spawn_raw_http_server(raw_response.to_string());
+
+        OpenAiProvider::from_config(&config)
+            .expect("provider")
+            .chat(
+                &[Message::user("hello")],
+                &[],
+                "",
+                std::path::Path::new("."),
+            )
+            .await
+            .expect_err("request should fail")
+    }
+
+    #[tokio::test]
+    async fn openai_provider_reads_retry_after_from_a_429_response() {
+        let err = chat_error(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nContent-Length: 4\r\nConnection: close\r\n\r\nslow",
+        )
+        .await;
+
+        assert!(
+            matches!(
+                err,
+                ProviderError::RateLimited {
+                    retry_after_ms: 7000
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_provider_reports_server_errors_as_transient() {
+        let err = chat_error(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 10\r\nConnection: close\r\n\r\noverloaded",
+        )
+        .await;
+
+        assert!(
+            matches!(&err, ProviderError::Transient(message) if message.starts_with("HTTP 503")),
+            "unexpected error: {err:?}"
+        );
+        assert!(err.is_retryable());
+    }
 
     #[tokio::test]
     async fn openai_provider_streams_text_tool_and_usage() {
