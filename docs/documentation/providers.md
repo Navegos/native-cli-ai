@@ -287,7 +287,7 @@ Toggle visibility in an interactive session:
 
 ## Context Window Management
 
-nca auto-detects context window sizes by querying the provider's model API. This enables automatic context compaction when the conversation gets too long.
+nca auto-detects context window sizes by querying the provider's model API. This enables automatic context compaction when the conversation gets too long. A successful lookup is cached for 24 hours in `<product home>/cache/model-limits.json`, so a new run does not wait on the provider's model list. Set `query_provider_models_api = false` to skip lookups.
 
 ```toml
 [memory.context]

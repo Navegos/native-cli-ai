@@ -95,7 +95,7 @@ nca -p "add a health check endpoint to the API"
 
 ## Directory Structure
 
-nca creates project-local files under `.nca/` for instructions, skills, and git worktrees. Session history, memory, and last-session pointers live under the product home (`$NCA_HOME`, `$XDG_DATA_HOME/ncacli`, or `~/.local/share/ncacli/`):
+nca creates project-local files under `.nca/` for instructions, skills, and git worktrees. Session history, command history, memory, last-session pointers, and screen recordings live under the product home (`$NCA_HOME`, `$XDG_DATA_HOME/ncacli`, or `~/.local/share/ncacli/`):
 
 ```
 ~/.local/share/ncacli/
