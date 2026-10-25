@@ -1462,6 +1462,8 @@ pub struct McpConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
+    /// Command that starts a local (stdio) server. Unused when `url` is set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -1469,6 +1471,15 @@ pub struct McpServerConfig {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// Endpoint of a remote server that speaks streamable HTTP. Set this instead of `command`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Extra request headers for a remote server. Put only non-secret values here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// Name of an environment variable that holds the bearer token. The token itself is never stored in config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bearer_token_env: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }

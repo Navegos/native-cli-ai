@@ -6,15 +6,22 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use super::mcp_http::McpHttpClient;
+
 pub fn load_mcp_tools(
     workspace_root: &Path,
     servers: &[McpServerConfig],
 ) -> Result<Vec<Box<dyn ToolExecutor>>, String> {
     let mut tools: Vec<Box<dyn ToolExecutor>> = Vec::new();
     for server in servers.iter().filter(|server| server.enabled) {
-        let server_tools = discover_server_tools(workspace_root, server)?;
-        for tool in server_tools {
-            tools.push(Box::new(tool));
+        // One unreachable server should not hide the tools of the others.
+        match discover_server_tools(workspace_root, server) {
+            Ok(server_tools) => {
+                for tool in server_tools {
+                    tools.push(Box::new(tool));
+                }
+            }
+            Err(error) => tracing::warn!("MCP server `{}` unavailable: {error}", server.name),
         }
     }
     Ok(tools)
@@ -84,7 +91,7 @@ fn discover_server_tools(
     workspace_root: &Path,
     server: &McpServerConfig,
 ) -> Result<Vec<McpTool>, String> {
-    let mut client = McpClient::spawn(workspace_root, server)?;
+    let mut client = McpSession::connect(workspace_root, server)?;
     client.initialize()?;
     let tools = client.list_tools()?;
     client.shutdown();
@@ -110,7 +117,7 @@ fn execute_mcp_call(
     tool_name: &str,
     input: Value,
 ) -> Result<String, String> {
-    let mut client = McpClient::spawn(workspace_root, server)?;
+    let mut client = McpSession::connect(workspace_root, server)?;
     client.initialize()?;
     let result = client.call_tool(tool_name, input)?;
     client.shutdown();
@@ -118,7 +125,7 @@ fn execute_mcp_call(
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct McpToolSchema {
+pub(super) struct McpToolSchema {
     name: String,
     #[serde(default)]
     description: Option<String>,
@@ -273,6 +280,53 @@ impl McpClient {
     }
 }
 
+/// One connection to an MCP server: a local process (`command`) or a remote endpoint (`url`).
+enum McpSession {
+    Stdio(McpClient),
+    Http(McpHttpClient),
+}
+
+impl McpSession {
+    fn connect(workspace_root: &Path, server: &McpServerConfig) -> Result<Self, String> {
+        match server.url.as_deref() {
+            Some(url) => Ok(Self::Http(McpHttpClient::connect(server, url)?)),
+            None if server.command.is_empty() => Err(format!(
+                "MCP server `{}` needs `command` (local) or `url` (remote)",
+                server.name
+            )),
+            None => Ok(Self::Stdio(McpClient::spawn(workspace_root, server)?)),
+        }
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        match self {
+            Self::Stdio(client) => client.initialize(),
+            Self::Http(client) => client.initialize(),
+        }
+    }
+
+    fn list_tools(&mut self) -> Result<Vec<McpToolSchema>, String> {
+        match self {
+            Self::Stdio(client) => client.list_tools(),
+            Self::Http(client) => client.list_tools(),
+        }
+    }
+
+    fn call_tool(&mut self, tool_name: &str, input: Value) -> Result<Value, String> {
+        match self {
+            Self::Stdio(client) => client.call_tool(tool_name, input),
+            Self::Http(client) => client.call_tool(tool_name, input),
+        }
+    }
+
+    fn shutdown(&mut self) {
+        match self {
+            Self::Stdio(client) => client.shutdown(),
+            Self::Http(client) => client.shutdown(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +343,9 @@ mod tests {
             args: Vec::new(),
             env: Default::default(),
             cwd: None,
+            url: None,
+            headers: Default::default(),
+            bearer_token_env: None,
             enabled: true,
         };
 

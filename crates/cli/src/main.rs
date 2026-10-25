@@ -1447,12 +1447,11 @@ fn list_mcp_servers(config: &NcaConfig, json: bool) -> anyhow::Result<()> {
         println!("No MCP servers configured");
     } else {
         for server in config.mcp.servers.iter().filter(|server| server.enabled) {
-            println!(
-                "{}  command={} {}",
-                server.name,
-                server.command,
-                server.args.join(" ")
-            );
+            let target = match &server.url {
+                Some(url) => format!("url={url}"),
+                None => format!("command={} {}", server.command, server.args.join(" ")),
+            };
+            println!("{}  {}", server.name, target);
         }
     }
     Ok(())

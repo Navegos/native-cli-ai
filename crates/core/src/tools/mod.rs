@@ -13,6 +13,7 @@ pub mod invoke_skill;
 pub mod ledger;
 pub mod list_directory;
 pub mod mcp;
+mod mcp_http;
 pub mod move_path;
 pub mod rename_path;
 pub mod replace_match;
