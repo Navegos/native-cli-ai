@@ -1,7 +1,7 @@
 # nca
 
 <p align="center">
-  <img src="docs/images/nca-readme-hero.png" alt="nca — Native CLI AI" width="720" />
+  <img src="docs/images/nca-readme-run.svg" alt="nca: a terminal runner jumps five monsters, one per issue on the next-release list" width="720" />
 </p>
 
 <p align="center">
