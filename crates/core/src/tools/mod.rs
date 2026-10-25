@@ -97,6 +97,9 @@ impl ToolRegistry {
         web_config: WebConfig,
         recording: RecordingConfig,
     ) -> Self {
+        // Only the macOS screen recorder reads the recording config.
+        #[cfg(not(target_os = "macos"))]
+        let _ = recording;
         // One ledger per registry: a read by any tool unlocks edits by the others.
         let ledger = Arc::new(FileLedger::new(workspace_root.clone()));
         let mut registry = Self::readonly_tools(workspace_root.clone(), web_config, ledger.clone());
