@@ -491,4 +491,29 @@ mod tests {
             PermissionTier::Ask
         );
     }
+
+    #[test]
+    fn desktop_tools_ask_by_default_and_are_denied_in_plan() {
+        let default = ApprovalPolicy::new(PermissionConfig {
+            mode: PermissionMode::Default,
+            ..Default::default()
+        });
+        let plan = ApprovalPolicy::new(PermissionConfig {
+            mode: PermissionMode::Plan,
+            ..Default::default()
+        });
+        for tool in ["app_input", "screen_record"] {
+            let input = r#"{"app":"Calculator","action":"start"}"#;
+            assert_eq!(
+                default.check(tool, input),
+                PermissionTier::Ask,
+                "{tool} should ask in Default mode"
+            );
+            assert_eq!(
+                plan.check(tool, input),
+                PermissionTier::Denied,
+                "{tool} should be denied in Plan mode"
+            );
+        }
+    }
 }
